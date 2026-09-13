@@ -24,15 +24,17 @@ async function boot(): Promise<void> {
     document.getElementById('reconfigure')?.addEventListener('click', () => { void openSetup() })
   }
 
-  // 保存并启动:沿用旧流程(shim + startRuntime);不做页面重载
-  const onLaunch = async (): Promise<void> => {
-    const reloaded = await loadConfig(bridge)
-    mountShim()
-    await startRuntime({ bridge, config: reloaded, pageCreated: true })
+  // 保存并重启:配置已写入,这里只负责关闭插件(用户从 Even App 重新打开即生效)
+  const onRestart = async (): Promise<void> => {
+    try {
+      await bridge.shutDownPageContainer(0)   // 0 = 立即退出
+    } catch (err) {
+      console.warn('[main] shutdown failed:', err)
+    }
   }
 
   const openSetup = async (): Promise<void> => {
-    await renderSetupView({ storage: bridge, onLaunch })
+    await renderSetupView({ storage: bridge, onRestart })
   }
 
   // DEV-ONLY:模拟器演示模式(?demo=1)预置一份指向本地 mock 网关的配置,便于抓原始截图
