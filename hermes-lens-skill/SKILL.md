@@ -1,7 +1,7 @@
 ---
 name: hermes-lens
 description: "Deploy the Hermes-side services (gateway, CORS fix, tunnel, local STT) that the Hermes Lens G2 glasses plugin needs."
-version: 1.1.0
+version: 1.1.1
 author:
   name: "Pb-207"
   github: "Pb-207"
@@ -27,17 +27,20 @@ sessions, talk, and read streamed replies on the glasses; configure and type on 
 > **语言 / Language** — 本文件是中英双语。**只输出用户偏好的那一种语言**,不要两种都念。
 > This file is bilingual. **Serve only the user's preferred language** — never read both halves aloud.
 >
-> **自动引导 / Auto-guidance** — 用户安装/首次使用后,按下面的 **6 步**逐条引导:每条先解释清楚 → 征求同意 → 再执行;用户拒绝就跳过并继续下一条。
-> After install / first use, walk the user through the **6 steps** below: explain → ask consent → act.
+> **自动引导 / Auto-guidance** — 用户安装/首次使用后,按下面的 **6 步**逐条引导:每条先解释清楚 → **征求同意** → 再执行;用户拒绝就跳过并继续下一条。
+> ⚠️ 第 2、3、4、5 步都必须**问出来**;尤其**第 4 步(是否要外网访问)绝不能默认跳过** —— 用户不回答就不往下走。
+> After install / first use, walk the user through the **6 steps** below: explain → **ask consent** → act.
 > If they decline a step, skip it and move on.
+> ⚠️ Steps 2, 3, 4 and 5 must all be **asked out loud**; in particular **step 4 (remote access) must never be
+> skipped silently** — do not move on until the user answers.
 
 | # | 中文 | English |
 |---|------|---------|
 | 1 | 运行逻辑 | How it works |
-| 2 | 配置 gateway(含安全提示) | Configure the gateway (with security notes) |
-| 3 | 检查/修复 CORS bug | Check & fix the CORS bug |
-| 4 | 远程访问(内网穿透) | Remote access (tunnel) |
-| 5 | 语音识别:本地部署或云 API | Speech-to-text: local or cloud |
+| 2 | 配置 gateway(**先问是否现在配**) | Configure the gateway (**ask first**) |
+| 3 | 检查/修复 CORS bug(**先检查,再问是否修**) | Check & fix the CORS bug (**check, then ask**) |
+| 4 | 远程访问(**必须先问:只在局域网用,还是要外网用?**) | Remote access (**must ask: LAN-only or remote?**) |
+| 5 | 语音识别(**问用户二选一**) | Speech-to-text (**offer the two options**) |
 | 6 | 手机端配置与使用 | Phone setup & usage |
 
 ## Overview
@@ -130,9 +133,16 @@ headers = {
 3. **复检**:再跑一次 `check-cors.ps1` 确认返回 `0`。
 4. ⚠️ **`hermes update` 会覆盖这个补丁** —— 每次升级 Hermes 之后**重新检查一遍**。
 
-## 步骤 4 · 远程访问(询问是否需要)
+## 步骤 4 · 远程访问(必须先问,不能默认跳过)
 
-如果用户只在**同一局域网**用,直接跳过。
+**先问用户这个问题,并等回答**:
+
+> 你只在**同一个局域网**(家里/办公室的 Wi-Fi)里用,还是也想在**外面用蜂窝网络**访问?
+
+**得到回答之前:不做任何配置、也不要默认跳过这一步。** 拿到答案后再分支:
+
+- 答「只在局域网」→ 跳过本步(第 6 步的手机端 Base URL 填局域网地址);
+- 答「要外网访问」→ 按下文配置 Cloudflare 命名隧道。
 
 需要在外网/蜂窝网络用 → 引导配置 **Cloudflare 命名隧道**(免费、不用开公网端口):
 
@@ -256,9 +266,17 @@ headers = {
 3. **Re-check** with `check-cors.ps1` until it exits `0`.
 4. ⚠️ **`hermes update` overwrites this patch** — re-check after every Hermes upgrade.
 
-## Step 4 · Remote access (ask whether it's needed)
+## Step 4 · Remote access (you MUST ask — never skip silently)
 
-Skip entirely if the user only uses it on the **same LAN**.
+**Ask this and wait for the answer**:
+
+> Will you only use this on the **same LAN** (home/office Wi-Fi), or do you also want to reach it from
+> **outside on cellular**?
+
+**Until they answer: configure nothing and do not skip this step by default.** Then branch:
+
+- "LAN only" → skip this step (in step 6 the phone Base URL is the LAN address);
+- "yes, from outside" → set up the Cloudflare named tunnel below.
 
 For mobile/cellular use, set up a **Cloudflare named tunnel** (free, no inbound ports):
 
