@@ -112,7 +112,9 @@ The scripts target **Windows PowerShell 5.1+** (`.ps1`, UTF-8 BOM so Chinese com
 
 ## 步骤 3 · 检查并修复 CORS bug(先检查,再征求同意)
 
-**背景**:某些 Hermes 版本里,`POST /api/sessions/{id}/chat/stream` 返回的 **200 SSE 响应没有 CORS 头**(aiohttp 的 CORS 中间件不处理 `StreamResponse`)。手机 WebView 是跨域调用,浏览器会**直接拒绝**这个响应,插件就报 `Failed to fetch`。更迷惑的是:404 之类的普通响应**反而带头**,所以很容易误判成网络问题。
+**先说明现状**:**Hermes ≥ 0.21.2 已经把 CORS 头加上了,无需任何补丁**(2026-09 实测:该端点自带 `Access-Control-Allow-Origin` 等头)。所以本步在多数情况下跑一次检查、返回 0 就结束;只有**旧版本(≤ 0.21.1)**才需要下面那段补丁。
+
+**背景**:某些**旧** Hermes 版本里,`POST /api/sessions/{id}/chat/stream` 返回的 **200 SSE 响应没有 CORS 头**(aiohttp 的 CORS 中间件不处理 `StreamResponse`)。手机 WebView 是跨域调用,浏览器会**直接拒绝**这个响应,插件就报 `Failed to fetch`。更迷惑的是:404 之类的普通响应**反而带头**,所以很容易误判成网络问题。
 
 1. **检查**:`.\scripts\check-cors.ps1 -BaseUrl <你的 gateway 地址> -ApiKey <key>`
    - 退出码 `0` = 正常;`1` = **缺少 CORS 头,需要修复**。
@@ -245,7 +247,9 @@ Once agreed:
 
 ## Step 3 · Check & fix the CORS bug (check first, then ask consent)
 
-**Background**: in some Hermes builds the **200 SSE response of `POST /api/sessions/{id}/chat/stream` carries no CORS header** (aiohttp's CORS middleware does not touch `StreamResponse`). The phone WebView calls cross-origin, so the browser **rejects** that response and the plugin reports `Failed to fetch`. Confusingly, plain responses such as 404 **do** carry the header — easy to misdiagnose as a network problem.
+**Current state**: **Hermes ≥ 0.21.2 already sends these CORS headers — no patch needed** (verified 2026-09: that endpoint carries `Access-Control-Allow-Origin` et al.). So on current builds this step is just a check that exits 0; only **older builds (≤ 0.21.1)** need the patch below.
+
+**Background**: in some **older** Hermes builds the **200 SSE response of `POST /api/sessions/{id}/chat/stream` carries no CORS header** (aiohttp's CORS middleware does not touch `StreamResponse`). The phone WebView calls cross-origin, so the browser **rejects** that response and the plugin reports `Failed to fetch`. Confusingly, plain responses such as 404 **do** carry the header — easy to misdiagnose as a network problem.
 
 1. **Check**: `.\scripts\check-cors.ps1 -BaseUrl <your gateway> -ApiKey <key>`
    - exit `0` = fine, exit `1` = **missing CORS header, needs the fix**.

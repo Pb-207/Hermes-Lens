@@ -20,13 +20,16 @@ Plain 404 responses DO carry the header, which misleads.
 
 ---
 
-## 2. 升级 Hermes 之后又坏了(`hermes update` 覆盖补丁)
+## 2. 升级 Hermes 之后,这个补丁还需不需要重新打
 
-`hermes update` 会把 `api_server.py` 换成新版,**CORS 补丁会消失** → 插件又开始 `Failed to fetch`。
-**处理**:每次升级后重跑 `scripts/check-cors.ps1`;必要时重新打补丁。
+**新版(≥ 0.21.2)不需要**:CORS 头已由网关自带,`api_server.py` 里手工加的补丁即使被 `hermes update` 覆盖也没关系(实测该端点仍返回完整 CORS 头)。
+**旧版(≤ 0.21.1)**:`hermes update` 会覆盖补丁 → 插件又开始 `Failed to fetch`,需要重新打。
+**通用做法**:每次升级后跑一次 `scripts/check-cors.ps1` —— 退出 0 就什么都不用做,返回 1 才按 `SKILL.md` 步骤 3 打补丁。
 
-`hermes update` replaces `api_server.py` and **wipes the CORS patch** → `Failed to fetch` returns.
-Re-run `check-cors.ps1` after every upgrade and re-apply the patch if needed.
+**Newer builds (≥ 0.21.2) don't need it**: the gateway sends the CORS headers itself, so losing the manual
+patch to `hermes update` is harmless (verified: the endpoint still returns full CORS headers).
+**Older builds (≤ 0.21.1)**: `hermes update` wipes the patch → `Failed to fetch` returns; re-apply it.
+**Either way**: run `scripts/check-cors.ps1` after an upgrade — exit 0 means do nothing, exit 1 means patch per step 3.
 
 ---
 
