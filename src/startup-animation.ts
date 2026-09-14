@@ -296,3 +296,23 @@ export async function showConfigureHint(bridge: EvenAppBridge): Promise<void> {
     await bridge.textContainerUpgrade({ containerID: C_HINT, containerName: 'hint', content: 'Configure it on the phone.' })
   } catch { /* ignore */ }
 }
+
+/** 是否双击(与 isStartTap 同一套事件归一化)。 */
+function isDoubleClick(evt: { textEvent?: { eventType?: unknown }; sysEvent?: { eventType?: unknown } }): boolean {
+  const sub = evt.textEvent ?? evt.sysEvent
+  if (!sub) return false
+  return OsEventTypeList.fromJson(sub.eventType) === OsEventTypeList.DOUBLE_CLICK_EVENT
+}
+
+/**
+ * 未配置(停在「请在手机上配置」页)时,插件同样是一个 app:
+ * 双击镜腿应能呼出「退出」提示 —— 官方审阅意见要求,没有手机配置时也要能退出。
+ * 返回退订函数(正常流程里一直保留,直到插件退出)。
+ */
+export function keepDoubleTapExit(bridge: EvenAppBridge): () => void {
+  return bridge.onEvenHubEvent((evt) => {
+    if (!isDoubleClick(evt as never)) return
+    console.log('[startup] double-tap -> exit prompt')
+    void bridge.shutDownPageContainer(1)   // 1 = 弹前台交互层,由用户决定是否退出
+  })
+}
