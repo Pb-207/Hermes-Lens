@@ -31,7 +31,10 @@ def token() -> str:
 
 
 TOK = token()
-OPENER = urllib.request.build_opener()
+# 显式禁用代理:本机注册表里配了系统代理(127.0.0.1:1080,时开时关),
+# urllib 会读它(curl/node 不读),于是代理没开时所有 API 调用都报
+# "SSL: UNEXPECTED_EOF_WHILE_READING"。这里强制直连。
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def api(url, data=None, method="GET", ctype="application/json"):

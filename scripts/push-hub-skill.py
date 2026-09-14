@@ -24,6 +24,8 @@ def token() -> str:
 
 
 TOK = token()
+# 同 push-release.py:绕开本机可能失效的系统代理,否则 API 调用会 TLS 失败
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def api(url, data=None, method="GET"):
@@ -31,7 +33,7 @@ def api(url, data=None, method="GET"):
     req.add_header("Authorization", "Bearer " + TOK)
     req.add_header("Accept", "application/vnd.github+json")
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with OPENER.open(req, timeout=60) as r:
             body = r.read().decode()
             return json.loads(body) if body.strip() else {}
     except urllib.error.HTTPError as e:
