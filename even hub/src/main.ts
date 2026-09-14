@@ -2,7 +2,7 @@ import { loadConfig, isConfigured } from './config'
 import { renderSetupView } from './setup-view'
 import { startRuntime } from './runtime/runtime'
 import { getBridgeWithDevFallback } from './dev-bridge'
-import { createAnimationPage, playLogoIntro, typeName, waitForStartTap, prepareRuntimePage, showConfigureHint } from './startup-animation'
+import { createAnimationPage, playLogoIntro, typeName, waitForStartTap, prepareRuntimePage, showConfigureHint, keepDoubleTapExit } from './startup-animation'
 
 async function boot(): Promise<void> {
   const bridge = await getBridgeWithDevFallback()
@@ -59,6 +59,8 @@ async function boot(): Promise<void> {
 
   if (!configured) {
     // 未配置:停在这一页给提示,并打开手机端配置页
+    // 同时保留「双击镜腿 → 退出提示」的入口(官方要求:没有手机配置也要能退出)
+    keepDoubleTapExit(bridge)
     await showConfigureHint(bridge)
     await openSetup()
     return
