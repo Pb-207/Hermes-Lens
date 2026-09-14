@@ -11,12 +11,18 @@ Bilingual, one item per block — 中文 then English.
 ## 1. 插件报 `Failed to fetch`(眼镜端/手机端都一样)
 
 **原因**:Hermes 某些版本里 `POST /api/sessions/{id}/chat/stream` 的 **200 SSE 响应没有 CORS 头**(aiohttp 的 CORS 中间件不处理 `StreamResponse`)。WebView 跨域,浏览器直接拒绝该响应。注意 404 之类的响应**反而带头**,别被误导。
-**处理**:跑 `scripts/check-cors.ps1`;缺头就按 `SKILL.md` 步骤 3 给 `api_server.py` 的 `StreamResponse` 加 CORS 头,然后 `hermes gateway restart`。
+**处理**:跑 `scripts/check-cors.ps1`。
+- 返回 `0` → 正常,什么都不用改。
+- 返回 `1` → **首选把 Hermes 升级到 ≥ 0.21.2**(该版本自带这些头),`hermes update` 后复检即可;
+  **只在无法升级时**,才按 `SKILL.md` 步骤 3 的**回退方案**给 `api_server.py` 的 `StreamResponse` 手工加 CORS 头。
 
 **Cause**: on some Hermes builds the 200 SSE response of `/chat/stream` carries **no CORS header**
 (aiohttp's CORS middleware skips `StreamResponse`); the cross-origin WebView then rejects it.
 Plain 404 responses DO carry the header, which misleads.
-**Fix**: run `scripts/check-cors.ps1`; if missing, patch the `StreamResponse` headers per step 3, then restart the gateway.
+**Fix**: run `scripts/check-cors.ps1`.
+- Exit `0` → fine, change nothing.
+- Exit `1` → **upgrade Hermes to ≥ 0.21.2 first** (that build sends the headers); re-check after `hermes update`.
+  Only if you *cannot* upgrade, fall back to patching the `StreamResponse` headers by hand (step 3).
 
 ---
 
@@ -24,12 +30,15 @@ Plain 404 responses DO carry the header, which misleads.
 
 **新版(≥ 0.21.2)不需要**:CORS 头已由网关自带,`api_server.py` 里手工加的补丁即使被 `hermes update` 覆盖也没关系(实测该端点仍返回完整 CORS 头)。
 **旧版(≤ 0.21.1)**:`hermes update` 会覆盖补丁 → 插件又开始 `Failed to fetch`,需要重新打。
-**通用做法**:每次升级后跑一次 `scripts/check-cors.ps1` —— 退出 0 就什么都不用做,返回 1 才按 `SKILL.md` 步骤 3 打补丁。
+**通用做法**:每次升级后跑一次 `scripts/check-cors.ps1` —— 退出 0 就什么都不用做,返回 1 才处理。
+**处理顺序永远是**:① 升级 Hermes 到 ≥ 0.21.2(首选)→ ② 仍然缺头、且无法升级时,才用步骤 3 的补丁回退。
 
 **Newer builds (≥ 0.21.2) don't need it**: the gateway sends the CORS headers itself, so losing the manual
 patch to `hermes update` is harmless (verified: the endpoint still returns full CORS headers).
 **Older builds (≤ 0.21.1)**: `hermes update` wipes the patch → `Failed to fetch` returns; re-apply it.
-**Either way**: run `scripts/check-cors.ps1` after an upgrade — exit 0 means do nothing, exit 1 means patch per step 3.
+**Either way**: run `scripts/check-cors.ps1` after an upgrade — exit 0 means do nothing, exit 1 means act.
+**Order of action, always**: ① upgrade Hermes to ≥ 0.21.2 (preferred) → ② only if that is impossible and the header
+is still missing, apply the step-3 patch as a fallback.
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: hermes-lens
 description: "Deploy the Hermes-side services (gateway, CORS fix, tunnel, local STT) that the Hermes Lens G2 glasses plugin needs."
-version: 1.1.1
+version: 1.2.0
 author:
   name: "Pb-207"
   github: "Pb-207"
@@ -38,7 +38,7 @@ sessions, talk, and read streamed replies on the glasses; configure and type on 
 |---|------|---------|
 | 1 | 运行逻辑 | How it works |
 | 2 | 配置 gateway(**先问是否现在配**) | Configure the gateway (**ask first**) |
-| 3 | 检查/修复 CORS bug(**先检查,再问是否修**) | Check & fix the CORS bug (**check, then ask**) |
+| 3 | CORS 检查(**有问题优先升级 Hermes**) | CORS check (**upgrade Hermes first**) |
 | 4 | 远程访问(**必须先问:只在局域网用,还是要外网用?**) | Remote access (**must ask: LAN-only or remote?**) |
 | 5 | 语音识别(**问用户二选一**) | Speech-to-text (**offer the two options**) |
 | 6 | 手机端配置与使用 | Phone setup & usage |
@@ -110,15 +110,19 @@ The scripts target **Windows PowerShell 5.1+** (`.ps1`, UTF-8 BOM so Chinese com
 - 怀疑泄露就换 key:改 `.env` 的 `API_SERVER_KEY` → `hermes gateway restart`;
 - 插件只通过 `Authorization` 头鉴权、不带 cookie,所以 CORS 可以放宽到 `*`(见步骤 3),但这**不代表**可以把服务裸奔在公网。
 
-## 步骤 3 · 检查并修复 CORS bug(先检查,再征求同意)
+## 步骤 3 · CORS 检查(发现问题**优先升级 Hermes**,补丁只作回退)
 
-**先说明现状**:**Hermes ≥ 0.21.2 已经把 CORS 头加上了,无需任何补丁**(2026-09 实测:该端点自带 `Access-Control-Allow-Origin` 等头)。所以本步在多数情况下跑一次检查、返回 0 就结束;只有**旧版本(≤ 0.21.1)**才需要下面那段补丁。
+**背景**:部分**旧** Hermes 版本里,`POST /api/sessions/{id}/chat/stream` 返回的 **200 SSE 响应没有 CORS 头**(aiohttp 的 CORS 中间件不处理 `StreamResponse`)。手机 WebView 是跨域调用,浏览器会**直接拒绝**这个响应,插件就报 `Failed to fetch`。更迷惑的是 404 之类的普通响应**反而带头**,容易误判成网络问题。
 
-**背景**:某些**旧** Hermes 版本里,`POST /api/sessions/{id}/chat/stream` 返回的 **200 SSE 响应没有 CORS 头**(aiohttp 的 CORS 中间件不处理 `StreamResponse`)。手机 WebView 是跨域调用,浏览器会**直接拒绝**这个响应,插件就报 `Failed to fetch`。更迷惑的是:404 之类的普通响应**反而带头**,所以很容易误判成网络问题。
+**现状**:**Hermes ≥ 0.21.2 已自带这些头,无需任何改动**(2026-09 实测)。
 
 1. **检查**:`.\scripts\check-cors.ps1 -BaseUrl <你的 gateway 地址> -ApiKey <key>`
-   - 退出码 `0` = 正常;`1` = **缺少 CORS 头,需要修复**。
-2. **修复(征得同意后)**:编辑 `hermes-agent/gateway/platforms/api_server.py`,给 `/chat/stream` 的 `StreamResponse` **手工加上 CORS 头**(它不走中间件),然后 `hermes gateway restart`:
+   - 退出码 `0` = 正常,**本步结束**,什么都别改;`1` = 缺 CORS 头 → 继续。
+2. **首选修复:把 Hermes 升到 0.21.2 或更高**(征得同意后执行;升级会**重启网关**)
+   - `hermes update` → `hermes gateway restart`;
+   - 复检 `check-cors.ps1` 直到返回 `0`;
+   - 为什么优先它:不用改任何代码,也不会被后续升级覆盖 —— 一劳永逸。
+3. **回退方案(仅当无法升级,例如版本被锁定/离线环境)**:手工补丁 —— 编辑 `hermes-agent/gateway/platforms/api_server.py`,给 `/chat/stream` 的 `StreamResponse` 手工加上 CORS 头(它不走中间件),然后 `hermes gateway restart`;同样复检到 `0`:
 
 ```python
 # 在该 StreamResponse 的 headers 字典里(通常在 "X-Accel-Buffering" 附近)补上:
@@ -132,8 +136,7 @@ headers = {
 }
 ```
 
-3. **复检**:再跑一次 `check-cors.ps1` 确认返回 `0`。
-4. ⚠️ **`hermes update` 会覆盖这个补丁** —— 每次升级 Hermes 之后**重新检查一遍**。
+   ⚠️ 回退方案的代价:这个补丁会被下一次 `hermes update` 覆盖 → 每次升级后都要重查、必要时重打。**一旦可以升级,建议切回第 2 步。**
 
 ## 步骤 4 · 远程访问(必须先问,不能默认跳过)
 
@@ -245,15 +248,19 @@ Once agreed:
 - Rotate on suspicion: change `API_SERVER_KEY` in `.env` → `hermes gateway restart`;
 - The plugin authenticates with an `Authorization` header and sends no cookies, which is why CORS can stay `*` (step 3) — that does **not** mean the service may run wide open.
 
-## Step 3 · Check & fix the CORS bug (check first, then ask consent)
-
-**Current state**: **Hermes ≥ 0.21.2 already sends these CORS headers — no patch needed** (verified 2026-09: that endpoint carries `Access-Control-Allow-Origin` et al.). So on current builds this step is just a check that exits 0; only **older builds (≤ 0.21.1)** need the patch below.
+## Step 3 · CORS check (if it fails, **upgrade Hermes first** — the patch is only a fallback)
 
 **Background**: in some **older** Hermes builds the **200 SSE response of `POST /api/sessions/{id}/chat/stream` carries no CORS header** (aiohttp's CORS middleware does not touch `StreamResponse`). The phone WebView calls cross-origin, so the browser **rejects** that response and the plugin reports `Failed to fetch`. Confusingly, plain responses such as 404 **do** carry the header — easy to misdiagnose as a network problem.
 
+**Current state**: **Hermes ≥ 0.21.2 already sends these headers — nothing to change** (verified 2026-09).
+
 1. **Check**: `.\scripts\check-cors.ps1 -BaseUrl <your gateway> -ApiKey <key>`
-   - exit `0` = fine, exit `1` = **missing CORS header, needs the fix**.
-2. **Fix (after consent)**: edit `hermes-agent/gateway/platforms/api_server.py` and add CORS headers **manually** to that `StreamResponse`, then `hermes gateway restart`:
+   - exit `0` = fine, **stop here** and change nothing; exit `1` = missing header → continue.
+2. **Preferred fix: upgrade Hermes to 0.21.2 or newer** (ask first; upgrading **restarts the gateway**)
+   - `hermes update` → `hermes gateway restart`;
+   - re-run `check-cors.ps1` until it exits `0`;
+   - why prefer it: no code to edit, and future upgrades cannot undo it.
+3. **Fallback (only if you cannot upgrade — pinned or offline install)**: patch by hand — edit `hermes-agent/gateway/platforms/api_server.py`, add CORS headers **manually** to that `StreamResponse`, then `hermes gateway restart`; re-check until `0`:
 
 ```python
 # inside the StreamResponse headers dict (usually near "X-Accel-Buffering"):
@@ -267,8 +274,8 @@ headers = {
 }
 ```
 
-3. **Re-check** with `check-cors.ps1` until it exits `0`.
-4. ⚠️ **`hermes update` overwrites this patch** — re-check after every Hermes upgrade.
+   ⚠️ The cost of the fallback: the next `hermes update` overwrites this patch, so every upgrade means
+   re-checking and possibly re-patching. **Switch back to step 2 as soon as you can upgrade.**
 
 ## Step 4 · Remote access (you MUST ask — never skip silently)
 
