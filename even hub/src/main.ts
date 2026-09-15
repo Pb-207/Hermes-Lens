@@ -47,6 +47,14 @@ async function boot(): Promise<void> {
   const config = await loadConfig(bridge)
   const configured = isConfigured(config)
 
+  // 「点击即启动」的监听必须**一开始就挂**:否则动画这几秒内的点击会被丢掉,
+  // 用户会以为要按两下(官方审阅意见:提示 Tap to start 就应当单击生效)。
+  const startTap = waitForStartTap(bridge)
+
+  // WebView 立刻有内容:未配置直接渲染配置页,已配置先给出运行中占位(官方意见:点击前不能空白)
+  if (!configured) await renderSetupView({ storage: bridge, onRestart })
+  else mountShim()
+
   if (pageMode === 'fail') {
     // 连动画页都建不出来(极罕见):直接交还 runtime 布局,至少不黑屏
     await prepareRuntimePage(bridge)
@@ -54,15 +62,13 @@ async function boot(): Promise<void> {
     // 1. LOGO(He -> 头像) 2. 打字机打出名字 3. —— Tap to start —— 闪烁,直到点击
     await playLogoIntro(bridge, pageMode)
     await typeName(bridge)
-    await waitForStartTap(bridge)
+    await startTap
   }
 
   if (!configured) {
-    // 未配置:停在这一页给提示,并打开手机端配置页
-    // 同时保留「双击镜腿 → 退出提示」的入口(官方要求:没有手机配置也要能退出)
+    // 未配置:配置页已在上面渲染过,这里只补眼镜端提示 + 保留双击退出入口
     keepDoubleTapExit(bridge)
     await showConfigureHint(bridge)
-    await openSetup()
     return
   }
 
