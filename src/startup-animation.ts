@@ -7,7 +7,7 @@ import {
   OsEventTypeList,
   ImageRawDataUpdateResult,
 } from '@evenrealities/even_hub_sdk'
-import { LOGO_SIZE, LOGO_MARK_PNG_BASE64, LOGO_PORTRAIT_PNG_BASE64, logoMarkBytes, logoPortraitBytes } from './logo-data'
+import { LOGO_SIZE, LOGO_PORTRAIT_PNG_BASE64, logoPortraitBytes } from './logo-data'
 import { APP_DISPLAY_NAME, makeLayoutContainers, sleep } from './startup-page'
 
 /**
@@ -61,14 +61,13 @@ const NAME_Y = 178 + CONTENT_DY
 const HINT_Y = 214 + CONTENT_DY
 const LINE_H = 40
 
-const TYPE_START_DELAY_MS = 500
+const TYPE_START_DELAY_MS = 0     // 立刻开始打字
 const TYPE_STEP_MS = 25
 const TYPE_HOLD_MS = 350
 const BLINK_MS = 650
 
-// 开场两帧 LOGO 各自的停留时长
-const LOGO_MARK_MS = 900
-const LOGO_PORTRAIT_MS = 1100
+// 启动即显示 Hermes 头像;留一点点时间让图像落屏,然后立刻开始打字
+const LOGO_PORTRAIT_MS = 250
 
 function nameBox(content: string, dx = 0, dy = 0, bold = false): TextContainerProperty {
   const x = NAME_X + dx
@@ -153,11 +152,10 @@ export type LogoPush = { ok: boolean; how: 'bytes' | 'base64' | 'none'; ms: numb
 /** 把 LOGO 推给图像容器(必须在建页之后调用)。
  *  宿主差异:模拟器只认 base64 的真实图片字节;真机更可能吃文档推荐的裸字节(number[])。
  *  所以两种都试,谁先成功算谁,并把结果返回给调用方做诊断。 */
-export async function pushLogo(bridge: EvenAppBridge, which: 'mark' | 'portrait'): Promise<LogoPush> {
-  const mark = which === 'mark'
+export async function pushLogo(bridge: EvenAppBridge): Promise<LogoPush> {
   const variants: Array<{ how: 'bytes' | 'base64'; data: Uint8Array | string }> = [
-    { how: 'bytes', data: mark ? logoMarkBytes() : logoPortraitBytes() },
-    { how: 'base64', data: mark ? LOGO_MARK_PNG_BASE64 : LOGO_PORTRAIT_PNG_BASE64 },
+    { how: 'bytes', data: logoPortraitBytes() },
+    { how: 'base64', data: LOGO_PORTRAIT_PNG_BASE64 },
   ]
   for (const v of variants) {
     const t0 = Date.now()
@@ -168,10 +166,10 @@ export async function pushLogo(bridge: EvenAppBridge, which: 'mark' | 'portrait'
         imageData: v.data,
       })
       const ms = Date.now() - t0
-      console.log('[startup] logo', which, v.how, '->', res, ms + 'ms')
+      console.log('[startup] logo', v.how, '->', res, ms + 'ms')
       if (res === ImageRawDataUpdateResult.success) return { ok: true, how: v.how, ms }
     } catch (err) {
-      console.warn('[startup] logo', which, v.how, 'threw:', err)
+      console.warn('[startup] logo', v.how, 'threw:', err)
     }
   }
   return { ok: false, how: 'none', ms: 0 }
@@ -186,18 +184,15 @@ async function setPlainName(bridge: EvenAppBridge, content: string): Promise<voi
 }
 
 /**
- * 开场:先出现 He 图标,再换成 Hermes 的黑白头像。
- * 顺带把「页面模式 + 两次推送的结果/耗时」写到提示行(打字机期间可见),用于真机诊断。
+ * 开场:启动即显示 Hermes 的黑白头像(已去掉 He 图标那一帧),随后立刻开始打字。
+ * 诊断信息只写日志(真机实测:裸字节可用,推送耗时约 620ms,比模拟器慢很多)。
  */
 export async function playLogoIntro(bridge: EvenAppBridge, pageMode: PageMode): Promise<string> {
-  const m = await pushLogo(bridge, 'mark')
-  if (!m.ok) await setPlainName(bridge, NAME_TEXT) // LOGO 推不上去时不能留白屏
-  await sleep(LOGO_MARK_MS)
-  const p = await pushLogo(bridge, 'portrait')
+  const p = await pushLogo(bridge)
+  if (!p.ok) await setPlainName(bridge, NAME_TEXT) // LOGO 推不上去时不能留白屏
   await sleep(LOGO_PORTRAIT_MS)
   const tag = (r: LogoPush): string => (r.ok ? (r.how === 'bytes' ? 'B' : 'b') + r.ms : 'x')
-  const dbg = `${pageMode} M:${tag(m)} P:${tag(p)}`
-  // 只在日志里留诊断信息(真机实测:裸字节可用;推送耗时 ~250ms/~620ms,比模拟器慢很多)
+  const dbg = `${pageMode} P:${tag(p)}`
   console.log('[startup] intro', dbg)
   return dbg
 }
