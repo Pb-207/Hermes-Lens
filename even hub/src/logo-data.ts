@@ -5,12 +5,6 @@
 export const LOGO_SIZE = 144
 
 /** 插件自己的 He 图标(原始 96px,居中于 144 画布) */
-export const LOGO_MARK_PNG_BASE64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAAAAADCLb1kAAAAvElEQVR4nO3YQWrEMBQE0XKR+1/Z2WSVzcSBkLan3kYIfYT4' +
-  'iAYJkiRJkiRJkiRJ7ut4VXC+KHy1fpWMkTEyRsbIGBkjY2SMjJExMkbGyBgZI2M+/mrj89v8uGuHZIyMkTEyRsbIXXPovFh3' +
-  '/PL9NtchGSNjZIyMkTFy1xw6LubTT3NrvkMyRsbIGBkjY+Rd3mXHUzokY2SMjJExMkaenkPH19j/0NvcIRkjY2SM/32AJEmS' +
-  'JEmSJEmSJ/kEgg8Jehcq30oAAAAASUVORK5CYII='
-
 /** Hermes 桌面端黑白头像(已去斑、裁边顶格) */
 export const LOGO_PORTRAIT_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAJAAAACQCAAAAADCLb1kAAALqUlEQVR4nO1c6XGlOhY+PTUJaELQC0EdghwCDkEOAYegGwIO' +
@@ -64,6 +58,5 @@ function decode(b64: string): Uint8Array {
   return out
 }
 
-export function logoMarkBytes(): Uint8Array { return decode(LOGO_MARK_PNG_BASE64) }
 
 export function logoPortraitBytes(): Uint8Array { return decode(LOGO_PORTRAIT_PNG_BASE64) }
