@@ -18,8 +18,8 @@ import urllib.request
 
 REPO = "Pb-207/Hermes-Lens"
 API = "https://api.github.com"
-SRC = r"D:\Hermes\!Proj\JsProjs\even-hermes"
-PUB = r"D:\Hermes\!Proj\JsProjs\Hermes-Lens-publish"
+SRC = r"D:\Hermes\!Proj\TsProjs\even-hermes"
+PUB = r"D:\Hermes\!Proj\TsProjs\Hermes-Lens-publish"
 DEV = os.path.join(SRC, "dev")
 SKIP = {".git", "node_modules", "dist", "backup", "even hub", "hermes-lens-skill", "store", "__pycache__"}
 

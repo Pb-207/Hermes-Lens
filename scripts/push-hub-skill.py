@@ -12,7 +12,7 @@ import urllib.request
 
 FORK = "Pb-207/hermes-community-hub"
 BRANCH = "skill/even-hermes"
-SKILL_SRC = r"D:\Hermes\!Proj\JsProjs\even-hermes\hermes-lens-skill"
+SKILL_SRC = r"D:\Hermes\!Proj\TsProjs\even-hermes\hermes-lens-skill"
 DEST_PREFIX = "skills/devops/hermes-lens"
 API = "https://api.github.com"
 
