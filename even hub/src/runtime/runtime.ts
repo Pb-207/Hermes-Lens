@@ -211,10 +211,12 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   // 有在飞请求的会话 id:列表转圈与状态栏 /thinking 的数据源
   let inflightConv: string | null = null
   const liveConvs = new Set<string>()
+  // ③a 多会话并发:每个会话一条独立的在飞流,控制器分开保存,中断某个会话不会误伤别的会话。
+  const turnCtrls = new Map<string, AbortController>()
   const syncLive = (): void => { setLiveConvs(liveConvs); ensureAnimating() }
   const clearInflight = (): void => {
     inflight = null
-    if (inflightConv) { liveConvs.delete(inflightConv); inflightConv = null }
+    if (inflightConv) { turnCtrls.delete(inflightConv); liveConvs.delete(inflightConv); inflightConv = null }
     syncLive()
   }
   let recordingTimer: ReturnType<typeof setTimeout> | null = null
@@ -353,7 +355,11 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         return
       }
       case 'send': {
-        inflight = new AbortController(); inflightConv = e.conversation; liveConvs.add(e.conversation); syncLive()
+        inflight = new AbortController(); inflightConv = e.conversation; liveConvs.add(e.conversation)
+        turnCtrls.set(e.conversation, inflight); syncLive()
+        // 视图归属:只有"正看着这个会话"才把增量推进界面;否则这条流只该在后台跑完,
+        // 不能把 A 会话的文字画到 B 会话的屏幕上。
+        const viewing = (): boolean => state.conversation === e.conversation
         try {
           if (desktopIds.has(e.conversation)) {
             // 桌面会话:/api/sessions/{id}/chat/stream(接续桌面会话)+ 流式(与 streamRespond 同结构,无 fallback)
@@ -365,14 +371,14 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
               if (ev.kind === 'delta') {
                 finalText += ev.text; pending += ev.text
                 const now = Date.now()
-                if (now - lastFlush >= STREAM_FLUSH_MS) { dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
+                if (now - lastFlush >= STREAM_FLUSH_MS) { if (viewing()) dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
               }
-              else if (ev.kind === 'tool') { dispatch({ kind: 'hermes_tool', label: ev.label }) }
-              else if (ev.kind === 'tool_end') { dispatch({ kind: 'hermes_tool', label: null }) }
-              else if (ev.kind === 'done') { dispatch({ kind: 'hermes_ok', text: ev.text || finalText }) }
+              else if (ev.kind === 'tool') { if (viewing()) dispatch({ kind: 'hermes_tool', label: ev.label }) }
+              else if (ev.kind === 'tool_end') { if (viewing()) dispatch({ kind: 'hermes_tool', label: null }) }
+              else if (ev.kind === 'done') { if (viewing()) dispatch({ kind: 'hermes_ok', text: ev.text || finalText }) }
             }
             // 节流的尾巴必须补发,否则最后一段文本只在 hermes_ok 里一起出现
-            if (pending) { dispatch({ kind: 'hermes_delta', text: pending }); pending = '' }
+            if (pending) { if (viewing()) dispatch({ kind: 'hermes_delta', text: pending }); pending = '' }
           } else {
           let finalText = ''
           let deltaCount = 0
@@ -386,21 +392,21 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
                 finalText += ev.text
                 pending += ev.text
                 const now = Date.now()
-                if (now - lastFlush >= STREAM_FLUSH_MS) { dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
+                if (now - lastFlush >= STREAM_FLUSH_MS) { if (viewing()) dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
                 break
               }
               case 'tool':
                 console.log('[runtime] stream: tool', ev.label)
-                dispatch({ kind: 'hermes_tool', label: ev.label })
+                if (viewing()) dispatch({ kind: 'hermes_tool', label: ev.label })
                 break
               case 'tool_end':
                 console.log('[runtime] stream: tool_end')
-                dispatch({ kind: 'hermes_tool', label: null })
+                if (viewing()) dispatch({ kind: 'hermes_tool', label: null })
                 break
               case 'done': {
                 console.log('[runtime] stream: done, deltas=', deltaCount, 'finalText.len=', (ev.text || finalText).length)
                 const finalReply = ev.text || finalText
-                dispatch({ kind: 'hermes_ok', text: finalReply })
+                if (viewing()) dispatch({ kind: 'hermes_ok', text: finalReply })
                 appendTurn(bridge, {
                   conversation: e.conversation,
                   transcript: e.transcript,
@@ -416,7 +422,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         } catch (err) {
           const msg = err instanceof HermesError ? err.message : 'hermes error'
           console.error('[runtime] stream error:', msg)
-          dispatch({ kind: 'hermes_err', message: msg })
+          if (viewing()) dispatch({ kind: 'hermes_err', message: msg })
         } finally {
           clearInflight()
         }
@@ -475,7 +481,10 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         return
       }
       case 'abort_inflight': {
-        if (inflight) { inflight.abort(); clearInflight() }
+        // 只中断"当前会话"的流:多会话并发下不能误伤别的会话
+        const conv = state.conversation
+        const c = turnCtrls.get(conv)
+        if (c) { c.abort(); turnCtrls.delete(conv); liveConvs.delete(conv); syncLive() }
         recorder.reset()
         return
       }
@@ -560,6 +569,30 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         source,
         gesture,
       })
+      // ⚠️ 该会话正在回复时,历史页禁用"单击开启语音转写":
+      // 否则单击会开麦进入录音态,而紧接着的双击(取消录音)会把这一轮回复一并中断。
+      // 双击本身不在这里拦 —— 它仍然负责"退一层到会话列表"。
+      // 放宽条件:只要**任何一轮在飞**(turnCtrls 非空)就拦,不依赖会话 id 形式完全一致 ——
+      // 之前用 liveConvs.has(state.conversation),若两边 id 形式不同(如 api_ 前缀差异)会静默失效。
+      // 日志会把两边的 id 都打出来,便于真机比对。
+      // "还在回复中"的完整判据(从用户视角):①请求在飞 ②或打字机还在逐字揭示
+      // 之前只看 ① —— 回复尾部的揭示阶段请求已结束、集合已清空,单击就会漏过去:
+      // 开麦 → 转写失败 → 直接弹 error 页。
+      {
+        const mid = state.kind === 'idle' ? (state as { reply?: string; reveal?: number; streaming?: boolean }) : null
+        const revealing = mid ? (mid.reply ?? '').length > (mid.reveal ?? 0) : false
+        if (gesture === 'TAP' && state.kind === 'idle' &&
+            (liveConvs.has(state.conversation) || turnCtrls.size > 0 || state.streaming === true || revealing)) {
+          console.log('[runtime] tap ignored: still replying', {
+            conv: state.conversation,
+            live: Array.from(liveConvs),
+            ctrls: Array.from(turnCtrls.keys()),
+            streaming: state.streaming === true,
+            revealing,
+          })
+          return
+        }
+      }
       if (gesture) dispatch({ kind: 'gesture', gesture })
       return
     }
@@ -585,7 +618,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   })
 
   window.addEventListener('beforeunload', () => {
-    if (inflight) inflight.abort()
+    for (const c of turnCtrls.values()) c.abort()
     bridge.audioControl(false).catch(() => {})
     stopAnimating()
     unsubHub()
