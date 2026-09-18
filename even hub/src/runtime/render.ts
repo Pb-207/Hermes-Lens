@@ -14,6 +14,12 @@ const HOME_ITEM_MAX_CHARS = 32;
 let LANG_ZH = true;
 export function setUiLang(zh: boolean): void { LANG_ZH = zh }
 
+// 由 runtime 注入:当前有在飞请求的会话 id 集合。列表行前的转圈与状态栏的 /thinking 都从这里派生。
+let LIVE_CONVS: Set<string> = new Set();
+export function setLiveConvs(ids: Iterable<string>): void { LIVE_CONVS = new Set(ids) }
+export function isLive(conv: string | undefined): boolean { return !!conv && LIVE_CONVS.has(conv) }
+
+
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1).replace(/\s+$/, '') + '…';
@@ -24,6 +30,8 @@ function truncate(s: string, max: number): string {
 const SPINNER_FRAMES = '|/-\\';
 
 function statusBadge(state: State, tickIndex: number): string {
+  // 重新进入一个仍在跑的会话:视图是历史页(idle),但请求还在飞 → 状态栏照样转
+  if (state.kind === 'idle' && isLive(state.conversation)) return SPINNER_FRAMES[tickIndex % SPINNER_FRAMES.length];
   switch (state.kind) {
     case 'recording':
     case 'transcribing':
@@ -42,6 +50,8 @@ function statusBadge(state: State, tickIndex: number): string {
 }
 
 function statusVerb(state: State): string {
+  // 同上:重新进入仍在跑的会话时,状态栏要显示它正在思考/生成
+  if (state.kind === 'idle' && isLive(state.conversation)) return 'thinking';
   switch (state.kind) {
     case 'recording':
       return 'timedOut' in state && state.timedOut ? 'tap to send' : 'listening';
@@ -120,7 +130,7 @@ function itemMenuLabel(item: HomeItem): string {
 
 // 窗口化:只显示选中项附近 MENU_WINDOW 行,首尾越界用 "..." 标记。
 // 这样容器内容一屏内,e.g. 镜腿滑动直接发 SCROLL 手势 → 移动选中项,而不是滚动页面。
-function menuWindow(items: HomeItem[], sel: number): string {
+function menuWindow(items: HomeItem[], sel: number, tick = 0): string {
   const n = items.length;
   if (n === 0) return '';
   let start = Math.max(0, sel - 3);
@@ -131,7 +141,12 @@ function menuWindow(items: HomeItem[], sel: number): string {
   }
   const lines: string[] = [];
   if (start > 0) lines.push('...');
-  for (let i = start; i < end; i++) lines.push((i === sel ? '> ' : '  ') + itemMenuLabel(items[i]));
+  for (let i = start; i < end; i++) {
+        const it = items[i]
+        const busy = it.kind === 'session' && isLive(it.session.id)
+        const label = busy ? truncate(itemMenuLabel(it), 30) : itemMenuLabel(it)
+        lines.push((i === sel ? '> ' : '  ') + (busy ? SPINNER_FRAMES[Math.abs(tick) % SPINNER_FRAMES.length] + ' ' : '') + label)
+      };
   if (end < n) lines.push('...');
   return lines.join('\n');
 }
@@ -167,9 +182,9 @@ export function mainContent(state: State, tickIndex = 0): string {
         }).join('\n');
       }
       if (state.view === 'desktop') {
-        return menuWindow(state.items, state.selectedIdx);
+        return menuWindow(state.items, state.selectedIdx, tickIndex);
       }
-      return menuWindow(state.items, state.selectedIdx);
+      return menuWindow(state.items, state.selectedIdx, tickIndex);
     }
     case 'idle':
       if (state.loading) return 'Loading ' + SPINNER_FRAMES[tickIndex % SPINNER_FRAMES.length];
