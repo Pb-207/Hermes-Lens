@@ -467,14 +467,10 @@ function reduceInner(state: State, event: Event): Transition {
 
     case 'thinking':
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        return {
-          state: {
-            kind: 'idle', conversation: state.conversation, history: state.history, desktop: state.desktop,
-            crumb: state.crumb, rowAnchor: state.rowAnchor, transcript: state.transcript,
-            reply: state.reply, reveal: state.reveal, toolMarks: state.toolMarks,
-          },
-          effects: [{ kind: 'render' }],
-        };
+        // 单击不改视图:停在原地继续看这一轮的流式输出。
+        // 以前这里切到 idle(历史页),导致"双击"的第一下就把视图换掉,后面的双击落在历史页上,
+        // 于是工具调用阶段双击看不到会话列表(/think 消失了)。视图切换交给双击处理。
+        return { state, effects: [{ kind: 'render' }] };
       }
       if (event.kind === 'hermes_delta') {
         return {

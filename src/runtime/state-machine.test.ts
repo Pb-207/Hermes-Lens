@@ -214,9 +214,9 @@ describe('reduce — interrupt gestures', () => {
     expect(t.state.kind).toBe('idle');
     expect(kinds(t.effects)).toEqual(['abort_inflight', 'render']);
   });
-  it('TAP in thinking returns to idle WITHOUT aborting the running reply', () => {
+  it('TAP in thinking keeps the view (stays in thinking) WITHOUT aborting the running reply', () => {
     const t = reduce(thinking, { kind: 'gesture', gesture: 'TAP' });
-    expect(t.state.kind).toBe('idle');
+    expect(t.state.kind).toBe('thinking');
     expect(kinds(t.effects)).toEqual(['render']);
   });
   it('TAP in idle-streaming does NOT abort the stream and starts a new utterance', () => {
