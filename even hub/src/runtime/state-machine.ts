@@ -25,6 +25,7 @@ export type Event =
   | { kind: 'hermes_delta'; text: string }
   | { kind: 'hermes_tool'; label: string | null }
   | { kind: 'set_conversation'; conversation: string }
+  | { kind: 'stream_snapshot'; conversation: string; reply: string; toolMarks: ToolMark[]; toolLabel: string | null; streaming: boolean }
   | { kind: 'home_loaded'; items: HomeItem[] }
   | { kind: 'menu_action'; itemID: number }
   | { kind: 'session_history_loaded'; messages: HermesMessage[] }
@@ -52,6 +53,7 @@ export type Effect =
   | { kind: 'transcribe' }
   | { kind: 'send'; conversation: string; transcript: string; images?: string[] }
   | { kind: 'abort_inflight' }
+  | { kind: 'abort_stt' }
   | { kind: 'exit_confirm' }
   | { kind: 'new_conversation' }
   | { kind: 'reload_history' }
@@ -181,7 +183,7 @@ function reduceInner(state: State, event: Event): Transition {
     }
     if (state.kind === 'recording' || state.kind === 'transcribing') {
       // 语音转写中双击 = 取消:停麦 + 中断转写,回到**当前会话的历史页**(不回会话列表/根目录)
-      return backToHistory(state, [{ kind: 'mic_off' }, { kind: 'abort_inflight' }]);
+      return backToHistory(state, [{ kind: 'mic_off' }, { kind: 'abort_stt' }]);
     }
     if (state.kind === 'thinking') {
       // 请求已经发出(在流式)时双击仍退一层到会话列表,避免看到"半截回复"
@@ -352,8 +354,9 @@ function reduceInner(state: State, event: Event): Transition {
 
     case 'idle':
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        // 正在流式 → 打断;否则直接开始新的语音(与原「回复页」行为一致)
-        const fx: Effect[] = state.streaming ? [{ kind: 'abort_inflight' }] : [];
+        // 注意:这里**不再**打断正在流式的回合 —— 回复会继续在后台跑,
+        // 列表上那条会话前面会转圈(官方/用户要求:返回不终止会话)。
+        const fx: Effect[] = [];
         fx.push({ kind: 'mic_on' }, { kind: 'render' });
         return {
           state: {
@@ -368,6 +371,13 @@ function reduceInner(state: State, event: Event): Transition {
             streaming: false, toolMarks: state.toolMarks,
           },
           effects: fx,
+        };
+      }
+      if (event.kind === 'stream_snapshot' && event.conversation === state.conversation) {
+        // 从「进行中的记录」恢复视图(切走再切回来时用)
+        return {
+          state: { ...state, streaming: event.streaming, reply: event.reply, toolMarks: event.toolMarks, toolLabel: event.toolLabel, reveal: event.reply.length },
+          effects: [{ kind: 'render' }],
         };
       }
       if (event.kind === 'reveal') {
@@ -440,7 +450,7 @@ function reduceInner(state: State, event: Event): Transition {
         }
       }
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        return backToHistory(state, [{ kind: 'abort_inflight' }])
+        return backToHistory(state, [{ kind: 'abort_stt' }])
       }
       if (event.kind === 'stt_ok') {
         if (!event.text.trim()) {
@@ -466,7 +476,8 @@ function reduceInner(state: State, event: Event): Transition {
             crumb: state.crumb, rowAnchor: state.rowAnchor, transcript: state.transcript,
             reply: state.reply, reveal: state.reveal, toolMarks: state.toolMarks,
           },
-          effects: [{ kind: 'abort_inflight' }, { kind: 'render' }],
+          // 单击只是回到历史页(准备说下一句),不能打断正在跑的回合
+          effects: [{ kind: 'render' }],
         };
       }
       if (event.kind === 'hermes_delta') {
