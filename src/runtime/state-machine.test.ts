@@ -183,7 +183,8 @@ describe('reduce — back to home (DOUBLE_CLICK from non-home)', () => {
     }
     const eff = t.effects.map((e) => e.kind);
     expect(eff).toContain('mic_off');
-    expect(eff).toContain('abort_inflight');
+    expect(eff).toContain('abort_stt');      // 只取消语音,不碰 Hermes 回合
+    expect(eff).not.toContain('abort_inflight');
     expect(eff).toContain('render');
   });
   it('from thinking goes back to the session list (double-click = back)', () => {
@@ -209,21 +210,21 @@ describe('reduce — set_conversation', () => {
 });
 
 describe('reduce — interrupt gestures', () => {
-  it('TAP in transcribing aborts and returns to idle', () => {
+  it('TAP in transcribing cancels the voice turn (abort_stt) and returns to idle', () => {
     const t = reduce(transcribing, { kind: 'gesture', gesture: 'TAP' });
     expect(t.state.kind).toBe('idle');
-    expect(kinds(t.effects)).toEqual(['abort_inflight', 'render']);
+    expect(kinds(t.effects)).toEqual(['abort_stt', 'render']);
   });
-  it('TAP in thinking aborts and returns to idle', () => {
+  it('TAP in thinking returns to idle without aborting the running turn', () => {
     const t = reduce(thinking, { kind: 'gesture', gesture: 'TAP' });
     expect(t.state.kind).toBe('idle');
-    expect(kinds(t.effects)).toEqual(['abort_inflight', 'render']);
+    expect(kinds(t.effects)).toEqual(['render']);
   });
-  it('TAP in idle-streaming aborts the stream AND starts a new utterance', () => {
+  it('TAP in idle-streaming keeps the running turn alive and starts a new utterance', () => {
     const streaming: State = { kind: 'idle', conversation: CONV, transcript: 'q', reply: 'partial', streaming: true, toolLabel: null, scrollOffset: 0 };
     const t = reduce(streaming, { kind: 'gesture', gesture: 'TAP' });
     expect(t.state.kind).toBe('recording');
-    expect(kinds(t.effects)).toEqual(['abort_inflight', 'mic_on', 'render']);
+    expect(kinds(t.effects)).toEqual(['mic_on', 'render']);      // 不再打断正在跑的回合
   });
   it('TAP in idle-done just starts a new utterance (no abort needed)', () => {
     const t = reduce(idle, { kind: 'gesture', gesture: 'TAP' });

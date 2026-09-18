@@ -41,6 +41,7 @@ async function buildHomeItems(bridge: EvenAppBridge): Promise<HomeItem[]> {
 }
 
 function isAnimatedState(state: State): boolean {
+  if (liveTurns.size > 0) return true   // 有会话在生成 → 列表上的 -\|/ 要转
   switch (state.kind) {
     case 'recording':
     case 'transcribing':
@@ -207,7 +208,16 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
 
   const render = new RenderQueue(bridge)
   const recorder = new PcmRecorder()
-  let inflight: AbortController | null = null
+  /**
+   * 每个会话各自一条进行中的流(参考 Hermes-lite-WebUI 的 streams: Map<sid, Stream>)。
+   * 双击返回/切到别的会话都不会终止它;列表上按 keys 打转圈。
+   */
+  type LiveTurn = { controller: AbortController; reply: string; toolMarks: ToolMark[]; toolLabel: string | null; streaming: boolean; startedAt: number }
+  const liveTurns = new Map<string, LiveTurn>()
+  let sttInflight: AbortController | null = null          // 语音转写仍是一次一个
+  const activeConvIds = (): string[] => Array.from(liveTurns.keys())
+  /** 把「哪些会话在生成」同步给渲染层,并立刻重绘一次 */
+  const syncActive = (): void => { render.setActiveConvs(activeConvIds()); void render.render(state, tickIndex) }
   let recordingTimer: ReturnType<typeof setTimeout> | null = null
   let sttStream: SttStream | null = null // 流式转写(不可用时回落 REST)
   let errorClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -327,21 +337,33 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         // 回落:OpenAI 兼容的整段 REST 转写
         const wav = pcmToWav(recorder.flatten(), { sampleRate: 16000, channels: 1, bitsPerSample: 16 })
         recorder.reset()
-        inflight = new AbortController()
+        sttInflight = new AbortController()
         try {
-          const text = await transcribe(config.stt, wav, inflight.signal)
+          const text = await transcribe(config.stt, wav, sttInflight.signal)
           dispatch({ kind: 'stt_ok', text })
         } catch (err) {
           if ((err as Error)?.name === 'AbortError') return   // 用户打断,不是错误
           const msg = err instanceof SttError ? err.message : 'stt error'
           dispatch({ kind: 'stt_err', message: msg })
         } finally {
-          inflight = null
+          sttInflight = null
         }
         return
       }
       case 'send': {
-        inflight = new AbortController()
+        const turn: LiveTurn = { controller: new AbortController(), reply: '', toolMarks: [], toolLabel: null, streaming: true, startedAt: Date.now() }
+        liveTurns.set(e.conversation, turn)
+        syncActive()
+        // 只有用户此刻正看着这个会话,才把增量推进视图;否则只累加到记录里
+        const viewing = (): boolean => (state as { conversation?: string }).conversation === e.conversation
+        // 记录内的追加:reply/toolMarks 与视图无关,始终维护
+        const pushDelta = (text: string): void => { turn.reply += text; if (viewing()) dispatch({ kind: 'hermes_delta', text }) }
+        const pushTool = (label: string | null): void => {
+          const l = (label ?? '').trim()
+          if (l && turn.toolMarks[turn.toolMarks.length - 1]?.label !== l) turn.toolMarks.push({ label: l, at: turn.reply.length })
+          turn.toolLabel = label
+          if (viewing()) dispatch({ kind: 'hermes_tool', label })
+        }
         try {
           if (desktopIds.has(e.conversation)) {
             // 桌面会话:/api/sessions/{id}/chat/stream(接续桌面会话)+ 流式(与 streamRespond 同结构,无 fallback)
@@ -349,15 +371,15 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
             let pending = ''
             let lastFlush = 0
             console.log('[runtime] send: desktop streaming start')
-            for await (const ev of sessionChatStream(config.hermes, e.conversation, e.transcript, e.images ?? [], inflight.signal)) {
+            for await (const ev of sessionChatStream(config.hermes, e.conversation, e.transcript, e.images ?? [], turn.controller.signal)) {
               if (ev.kind === 'delta') {
                 finalText += ev.text; pending += ev.text
                 const now = Date.now()
-                if (now - lastFlush >= STREAM_FLUSH_MS) { dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
+                if (now - lastFlush >= STREAM_FLUSH_MS) { pushDelta(pending); pending = ''; lastFlush = now }
               }
-              else if (ev.kind === 'tool') { dispatch({ kind: 'hermes_tool', label: ev.label }) }
-              else if (ev.kind === 'tool_end') { dispatch({ kind: 'hermes_tool', label: null }) }
-              else if (ev.kind === 'done') { dispatch({ kind: 'hermes_ok', text: ev.text || finalText }) }
+              else if (ev.kind === 'tool') { pushTool(ev.label) }
+              else if (ev.kind === 'tool_end') { pushTool(null) }
+              else if (ev.kind === 'done') { if (viewing()) dispatch({ kind: 'hermes_ok', text: ev.text || finalText }) }
             }
             // 节流的尾巴必须补发,否则最后一段文本只在 hermes_ok 里一起出现
             if (pending) { dispatch({ kind: 'hermes_delta', text: pending }); pending = '' }
@@ -367,28 +389,29 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
           let pending = ''
           let lastFlush = 0
           console.log('[runtime] send: streaming start')
-          for await (const ev of streamRespond(config.hermes, e.conversation, e.transcript, inflight.signal)) {
+          for await (const ev of streamRespond(config.hermes, e.conversation, e.transcript, turn.controller.signal)) {
             switch (ev.kind) {
               case 'delta': {
                 deltaCount += 1
                 finalText += ev.text
                 pending += ev.text
                 const now = Date.now()
-                if (now - lastFlush >= STREAM_FLUSH_MS) { dispatch({ kind: 'hermes_delta', text: pending }); pending = ''; lastFlush = now }
+                if (now - lastFlush >= STREAM_FLUSH_MS) { pushDelta(pending); pending = ''; lastFlush = now }
                 break
               }
               case 'tool':
                 console.log('[runtime] stream: tool', ev.label)
-                dispatch({ kind: 'hermes_tool', label: ev.label })
+                pushTool(ev.label)
                 break
               case 'tool_end':
                 console.log('[runtime] stream: tool_end')
-                dispatch({ kind: 'hermes_tool', label: null })
+                pushTool(null)
                 break
               case 'done': {
                 console.log('[runtime] stream: done, deltas=', deltaCount, 'finalText.len=', (ev.text || finalText).length)
                 const finalReply = ev.text || finalText
-                dispatch({ kind: 'hermes_ok', text: finalReply })
+                turn.reply = finalReply
+                if (viewing()) dispatch({ kind: 'hermes_ok', text: finalReply })
                 appendTurn(bridge, {
                   conversation: e.conversation,
                   transcript: e.transcript,
@@ -402,11 +425,19 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
           }
           }
         } catch (err) {
-          const msg = err instanceof HermesError ? err.message : 'hermes error'
-          console.error('[runtime] stream error:', msg)
-          dispatch({ kind: 'hermes_err', message: msg })
+          if ((err as Error)?.name === 'AbortError') {
+            console.log('[runtime] turn aborted')
+          } else {
+            const msg = err instanceof HermesError ? err.message : 'hermes error'
+            console.error('[runtime] stream error:', msg)
+            if (viewing()) dispatch({ kind: 'hermes_err', message: msg })
+          }
         } finally {
-          inflight = null
+          // 结束(完成/出错/被取消)才从「进行中」摘掉 —— 切走不会再终止它
+          turn.streaming = false
+          console.log('[runtime] turn finished', e.conversation.slice(0, 12), 'len=' + turn.reply.length, 'whileAway=' + String(!viewing()))
+          liveTurns.delete(e.conversation)
+          syncActive()
         }
         return
       }
@@ -456,14 +487,28 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
           const messages = await getSessionMessages(config.hermes, e.conversation)
           await new Promise<void>((r) => setTimeout(r, Math.max(0, 600 - (Date.now() - t0))))
           dispatch({ kind: 'session_history_loaded', messages })
+          const t = liveTurns.get(e.conversation)
+          if (t) {
+            // 该会话仍在生成:把已流出的内容恢复到视图里,后续增量继续接上
+            dispatch({ kind: 'stream_snapshot', conversation: e.conversation, reply: t.reply, toolMarks: t.toolMarks, toolLabel: t.toolLabel, streaming: t.streaming })
+          }
         } catch (err) {
           console.error('[runtime] session history failed:', err)
           dispatch({ kind: 'session_history_loaded', messages: [] }) // 防 loading 卡死
         }
         return
       }
+      case 'abort_stt': {
+        // 语音取消:只中断录音/转写,不碰任何 Hermes 回合(回合要继续在后台跑)
+        if (sttInflight) { sttInflight.abort(); sttInflight = null }
+        return
+      }
       case 'abort_inflight': {
-        if (inflight) { inflight.abort(); inflight = null }
+        const cur = (state as { conversation?: string }).conversation
+        const t = cur ? liveTurns.get(cur) : undefined
+        if (t) { try { t.controller.abort() } catch { /* ignore */ } ; liveTurns.delete(cur!) }
+        sttInflight?.abort(); sttInflight = null
+        syncActive()
         recorder.reset()
         return
       }
@@ -573,7 +618,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   })
 
   window.addEventListener('beforeunload', () => {
-    if (inflight) inflight.abort()
+    for (const t of liveTurns.values()) { try { t.controller.abort() } catch { /* ignore */ } }
     bridge.audioControl(false).catch(() => {})
     stopAnimating()
     unsubHub()
