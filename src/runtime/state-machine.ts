@@ -79,7 +79,8 @@ function backToHome(state: State): Transition {
     state: { kind: 'home', conversation: state.conversation, view: 'root', items: [{ kind: 'dir', name: 'Desktop' }] /* Glasses 已停用 */, selectedIdx: 0 },
     effects: [
       { kind: 'mic_off' },
-      { kind: 'abort_inflight' },
+      // ① 离开会话不再中断正在跑的回复:双击返回后会话继续在后台流式,
+      // 回复完成后由服务端持久化,下次进入该会话即可看到完整内容。
       { kind: 'reload_history' },
       { kind: 'render' },
     ],
@@ -352,8 +353,8 @@ function reduceInner(state: State, event: Event): Transition {
 
     case 'idle':
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        // 正在流式 → 打断;否则直接开始新的语音(与原「回复页」行为一致)
-        const fx: Effect[] = state.streaming ? [{ kind: 'abort_inflight' }] : [];
+        // ① 单击不再打断正在跑的回复(双击返回的第一下会走到这里,以前会在这里把流杀掉)
+        const fx: Effect[] = [];
         fx.push({ kind: 'mic_on' }, { kind: 'render' });
         return {
           state: {
@@ -466,7 +467,7 @@ function reduceInner(state: State, event: Event): Transition {
             crumb: state.crumb, rowAnchor: state.rowAnchor, transcript: state.transcript,
             reply: state.reply, reveal: state.reveal, toolMarks: state.toolMarks,
           },
-          effects: [{ kind: 'abort_inflight' }, { kind: 'render' }],
+          effects: [{ kind: 'render' }],
         };
       }
       if (event.kind === 'hermes_delta') {
