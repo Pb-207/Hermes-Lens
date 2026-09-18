@@ -186,7 +186,7 @@ describe('reduce — back to home (DOUBLE_CLICK from non-home)', () => {
     expect(eff).toContain('abort_inflight');
     expect(eff).toContain('render');
   });
-  it('from thinking goes back to the session list WITHOUT aborting the running reply (double-click = back)', () => {
+  it('from thinking goes back to the session list without aborting (double-click = back)', () => {
     const t = reduce(thinking, { kind: 'gesture', gesture: 'DOUBLE_CLICK' });
     expect(t.state.kind).toBe('home');
     expect(kinds(t.effects)).toEqual(['reload_sessions', 'render']);
@@ -214,16 +214,16 @@ describe('reduce — interrupt gestures', () => {
     expect(t.state.kind).toBe('idle');
     expect(kinds(t.effects)).toEqual(['abort_inflight', 'render']);
   });
-  it('TAP in thinking keeps the view (stays in thinking) WITHOUT aborting the running reply', () => {
+  it('TAP in thinking aborts and returns to idle', () => {
     const t = reduce(thinking, { kind: 'gesture', gesture: 'TAP' });
-    expect(t.state.kind).toBe('thinking');
-    expect(kinds(t.effects)).toEqual(['render']);
+    expect(t.state.kind).toBe('idle');
+    expect(kinds(t.effects)).toEqual(['abort_inflight', 'render']);
   });
-  it('TAP in idle-streaming does NOT abort the stream and starts a new utterance', () => {
+  it('TAP in idle-streaming aborts the stream AND starts a new utterance', () => {
     const streaming: State = { kind: 'idle', conversation: CONV, transcript: 'q', reply: 'partial', streaming: true, toolLabel: null, scrollOffset: 0 };
     const t = reduce(streaming, { kind: 'gesture', gesture: 'TAP' });
     expect(t.state.kind).toBe('recording');
-    expect(kinds(t.effects)).toEqual(['mic_on', 'render']);
+    expect(kinds(t.effects)).toEqual(['abort_inflight', 'mic_on', 'render']);
   });
   it('TAP in idle-done just starts a new utterance (no abort needed)', () => {
     const t = reduce(idle, { kind: 'gesture', gesture: 'TAP' });

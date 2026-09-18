@@ -75,7 +75,7 @@ function clampIdx(items: HomeItem[], next: number): number {
 }
 
 function toSessionList(state: State): Transition {
-  // 统一的"退一层":回到 Desktop 会话列表并刷新。不中断任何在飞请求(①)。
+  // 统一的"退一层":回到 Desktop 会话列表并刷新。不中断任何在飞请求。
   return {
     state: { kind: 'home', conversation: state.conversation, view: 'desktop', items: [{ kind: 'new' }], selectedIdx: 0, loading: true },
     effects: [{ kind: 'reload_sessions' }, { kind: 'render' }],
@@ -87,8 +87,7 @@ function backToHome(state: State): Transition {
     state: { kind: 'home', conversation: state.conversation, view: 'root', items: [{ kind: 'dir', name: 'Desktop' }] /* Glasses 已停用 */, selectedIdx: 0 },
     effects: [
       { kind: 'mic_off' },
-      // ① 离开会话不再中断正在跑的回复:双击返回后会话继续在后台流式,
-      // 回复完成后由服务端持久化,下次进入该会话即可看到完整内容。
+      { kind: 'abort_inflight' },
       { kind: 'reload_history' },
       { kind: 'render' },
     ],
@@ -165,8 +164,7 @@ function reduceInner(state: State, event: Event): Transition {
   //  - home(root) → 退出;home(folder/desktop) → 折叠回根目录
   //  - idle(会话历史页) → 返回上一级 Desktop 会话列表
   //  - displaying(回复页) → 回当前会话历史页(idle)并刷新历史
-  //  - recording/transcribing(录音/转写中) → 取消,回当前会话历史页(保留目录/历史)
-  //  - thinking(请求已发、首字未到) → 退一层到 Desktop 会话列表,且不中断请求(①)
+  //  - recording/transcribing/thinking(进行中) → 取消,回当前会话历史页(保留目录/历史)
   //  - 其他(error 等) → 回根目录
   if (event.kind === 'gesture' && event.gesture === 'DOUBLE_CLICK') {
     if (state.kind === 'disconnected') {
@@ -183,7 +181,6 @@ function reduceInner(state: State, event: Event): Transition {
       return { state, effects: [{ kind: 'exit_confirm' }] };
     }
     if (state.kind === 'idle') {
-      // 双击返回上一级:Desktop 会话列表(与 thinking 走同一处,保证一致)
       return toSessionList(state);
     }
     if (state.kind === 'recording' || state.kind === 'transcribing') {
@@ -191,14 +188,10 @@ function reduceInner(state: State, event: Event): Transition {
       return backToHistory(state, [{ kind: 'mic_off' }, { kind: 'abort_inflight' }]);
     }
     if (state.kind === 'thinking') {
-      // 请求已发出、首字还没到(或刚在流式)时双击:与 idle 一样**只退一层**到 Desktop 会话列表。
-      // 以前这里走 backToHome(view: 'root'),所以"还没出字就返回"会一路退到根目录 /;
-      // 同时不加 abort_inflight,让这一轮继续在后台跑完(①)。
-      // 工具行(/read_file、/terminal、/process_manage 等)都发生在 thinking 里,所以一并覆盖。
+      // 请求已发、首字未到(或刚在流式)时双击:只退一层到 Desktop 会话列表(工具行/think 都属此状态)
       return toSessionList(state);
     }
-    // 其余状态(含 error 等)双击同样只退一层到会话列表,不再退到根目录 /。
-    // 注意:recording / transcribing(眼镜上的 listening)在上面单独处理,语义保持"取消"不变。
+    // 其余状态(含 error)同样只退一层,不再退到根目录 /
     return toSessionList(state);
   }
 
@@ -364,8 +357,8 @@ function reduceInner(state: State, event: Event): Transition {
 
     case 'idle':
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        // ① 单击不再打断正在跑的回复(双击返回的第一下会走到这里,以前会在这里把流杀掉)
-        const fx: Effect[] = [];
+        // 正在流式 → 打断;否则直接开始新的语音(与原「回复页」行为一致)
+        const fx: Effect[] = state.streaming ? [{ kind: 'abort_inflight' }] : [];
         fx.push({ kind: 'mic_on' }, { kind: 'render' });
         return {
           state: {
@@ -472,10 +465,14 @@ function reduceInner(state: State, event: Event): Transition {
 
     case 'thinking':
       if (event.kind === 'gesture' && event.gesture === 'TAP') {
-        // 单击不改视图:停在原地继续看这一轮的流式输出。
-        // 以前这里切到 idle(历史页),导致"双击"的第一下就把视图换掉,后面的双击落在历史页上,
-        // 于是工具调用阶段双击看不到会话列表(/think 消失了)。视图切换交给双击处理。
-        return { state, effects: [{ kind: 'render' }] };
+        return {
+          state: {
+            kind: 'idle', conversation: state.conversation, history: state.history, desktop: state.desktop,
+            crumb: state.crumb, rowAnchor: state.rowAnchor, transcript: state.transcript,
+            reply: state.reply, reveal: state.reveal, toolMarks: state.toolMarks,
+          },
+          effects: [{ kind: 'abort_inflight' }, { kind: 'render' }],
+        };
       }
       if (event.kind === 'hermes_delta') {
         return {
