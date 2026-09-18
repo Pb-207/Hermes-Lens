@@ -208,6 +208,15 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   const render = new RenderQueue(bridge)
   const recorder = new PcmRecorder()
   let inflight: AbortController | null = null
+  // 有在飞请求的会话 id:列表转圈与状态栏 /thinking 的数据源
+  let inflightConv: string | null = null
+  const liveConvs = new Set<string>()
+  const syncLive = (): void => { render.setLiveConvs(liveConvs); ensureAnimating() }
+  const clearInflight = (): void => {
+    inflight = null
+    if (inflightConv) { liveConvs.delete(inflightConv); inflightConv = null }
+    syncLive()
+  }
   let recordingTimer: ReturnType<typeof setTimeout> | null = null
   let sttStream: SttStream | null = null // 流式转写(不可用时回落 REST)
   let errorClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -215,10 +224,10 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   let tickIndex = 0
 
   const ensureAnimating = (): void => {
-    if (animationTimer || !isAnimatedState(state)) return
+    if (animationTimer || (!isAnimatedState(state) && liveConvs.size === 0)) return
     animationTimer = setInterval(() => {
       tickIndex += 1
-      if (!isAnimatedState(state)) {
+      if (!isAnimatedState(state) && liveConvs.size === 0) {
         if (animationTimer) { clearInterval(animationTimer); animationTimer = null }
         return
       }
@@ -327,7 +336,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         // 回落:OpenAI 兼容的整段 REST 转写
         const wav = pcmToWav(recorder.flatten(), { sampleRate: 16000, channels: 1, bitsPerSample: 16 })
         recorder.reset()
-        inflight = new AbortController()
+        inflight = new AbortController(); inflightConv = e.conversation; liveConvs.add(e.conversation); syncLive()
         try {
           const text = await transcribe(config.stt, wav, inflight.signal)
           dispatch({ kind: 'stt_ok', text })
@@ -336,12 +345,12 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
           const msg = err instanceof SttError ? err.message : 'stt error'
           dispatch({ kind: 'stt_err', message: msg })
         } finally {
-          inflight = null
+          clearInflight()
         }
         return
       }
       case 'send': {
-        inflight = new AbortController()
+        inflight = new AbortController(); inflightConv = e.conversation; liveConvs.add(e.conversation); syncLive()
         try {
           if (desktopIds.has(e.conversation)) {
             // 桌面会话:/api/sessions/{id}/chat/stream(接续桌面会话)+ 流式(与 streamRespond 同结构,无 fallback)
@@ -406,7 +415,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
           console.error('[runtime] stream error:', msg)
           dispatch({ kind: 'hermes_err', message: msg })
         } finally {
-          inflight = null
+          clearInflight()
         }
         return
       }
@@ -463,7 +472,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         return
       }
       case 'abort_inflight': {
-        if (inflight) { inflight.abort(); inflight = null }
+        if (inflight) { inflight.abort(); clearInflight() }
         recorder.reset()
         return
       }
