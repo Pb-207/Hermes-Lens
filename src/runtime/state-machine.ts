@@ -157,7 +157,8 @@ function reduceInner(state: State, event: Event): Transition {
   //  - home(root) → 退出;home(folder/desktop) → 折叠回根目录
   //  - idle(会话历史页) → 返回上一级 Desktop 会话列表
   //  - displaying(回复页) → 回当前会话历史页(idle)并刷新历史
-  //  - recording/transcribing/thinking(进行中) → 取消,回当前会话历史页(保留目录/历史)
+  //  - recording/transcribing(录音/转写中) → 取消,回当前会话历史页(保留目录/历史)
+  //  - thinking(请求已发、首字未到) → 退一层到 Desktop 会话列表,且不中断请求(①)
   //  - 其他(error 等) → 回根目录
   if (event.kind === 'gesture' && event.gesture === 'DOUBLE_CLICK') {
     if (state.kind === 'disconnected') {
@@ -185,8 +186,13 @@ function reduceInner(state: State, event: Event): Transition {
       return backToHistory(state, [{ kind: 'mic_off' }, { kind: 'abort_inflight' }]);
     }
     if (state.kind === 'thinking') {
-      // 请求已经发出(在流式)时双击仍退一层到会话列表,避免看到"半截回复"
-      return backToHome(state);
+      // 请求已发出、首字还没到(或刚在流式)时双击:与 idle 一样**只退一层**到 Desktop 会话列表。
+      // 以前这里走 backToHome(view: 'root'),所以"还没出字就返回"会一路退到根目录 /;
+      // 同时不加 abort_inflight,让这一轮继续在后台跑完(①)。
+      return {
+        state: { kind: 'home', conversation: state.conversation, view: 'desktop', items: [{ kind: 'new' }], selectedIdx: 0, loading: true },
+        effects: [{ kind: 'reload_sessions' }, { kind: 'render' }],
+      };
     }
     return backToHome(state);
   }

@@ -189,7 +189,7 @@ describe('reduce — back to home (DOUBLE_CLICK from non-home)', () => {
   it('from thinking goes back to the session list WITHOUT aborting the running reply (double-click = back)', () => {
     const t = reduce(thinking, { kind: 'gesture', gesture: 'DOUBLE_CLICK' });
     expect(t.state.kind).toBe('home');
-    expect(kinds(t.effects)).toEqual(['mic_off', 'reload_history', 'render']);
+    expect(kinds(t.effects)).toEqual(['reload_sessions', 'render']);
   });
 });
 
