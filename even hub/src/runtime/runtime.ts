@@ -10,7 +10,7 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import { type AppConfig, saveConfig } from '../config'
 import { reduce, initialState, newConversationName, type Effect, type Event, type Gesture, type State } from './state-machine'
-import { RenderQueue, setUiLang, statusLine, mainContent, footerHint } from './render'
+import { RenderQueue, setUiLang, setLiveConvs, statusLine, mainContent, footerHint } from './render'
 
 // 流式节流:delta 累积到该间隔才 dispatch 一次(减少 Even IPC 与渲染次数)
 const STREAM_FLUSH_MS = 100
@@ -211,7 +211,7 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
   // 有在飞请求的会话 id:列表转圈与状态栏 /thinking 的数据源
   let inflightConv: string | null = null
   const liveConvs = new Set<string>()
-  const syncLive = (): void => { render.setLiveConvs(liveConvs); ensureAnimating() }
+  const syncLive = (): void => { setLiveConvs(liveConvs); ensureAnimating() }
   const clearInflight = (): void => {
     inflight = null
     if (inflightConv) { liveConvs.delete(inflightConv); inflightConv = null }
@@ -271,7 +271,9 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
     void syncMenu()
     updatePhoneUi(state)
     // 动画 tick:在跑 effects 之前就按新 state 启停(否则被 await 的加载 effect 拖住,Loading 期间 spinner 不动)
-    if (isAnimatedState(state)) ensureAnimating()
+    // 只要有会话在飞,就确保动画计时器在运行 —— 列表页(home)不属于动画态,
+    // 但它的转圈前缀要动,否则会出现'字符静止不动'。
+    if (isAnimatedState(state) || liveConvs.size > 0) ensureAnimating()
     else stopAnimating()
     for (const e of t.effects) {
       try {
@@ -336,7 +338,8 @@ export async function startRuntime(opts: RuntimeOptions): Promise<void> {
         // 回落:OpenAI 兼容的整段 REST 转写
         const wav = pcmToWav(recorder.flatten(), { sampleRate: 16000, channels: 1, bitsPerSample: 16 })
         recorder.reset()
-        inflight = new AbortController(); inflightConv = e.conversation; liveConvs.add(e.conversation); syncLive()
+        // transcribe 效果不带 conversation,用当前状态的会话 id
+        { const conv = state.conversation; inflight = new AbortController(); inflightConv = conv; liveConvs.add(conv); syncLive() }
         try {
           const text = await transcribe(config.stt, wav, inflight.signal)
           dispatch({ kind: 'stt_ok', text })
