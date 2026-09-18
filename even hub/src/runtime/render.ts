@@ -7,11 +7,6 @@ import { viewRows, pageWindow, pageTextAt } from './history-view';
 
 export const MAX_MAIN_CHARS = 950;
 
-/** 会话列表里「正在生成」的会话 id(由 runtime 注入);前缀 -\|/ 由 tick 驱动旋转。 */
-let ACTIVE_CONVS = new Set<string>();
-export function setActiveConvs(ids: Iterable<string>): void { ACTIVE_CONVS = new Set(ids); }
-const SPIN_FRAMES = ['-', '\\', '|', '/'];
-
 const IDLE_HINT = 'Tap to talk · scroll up = new · 2× = back';
 const HOME_ITEM_MAX_CHARS = 32;
 
@@ -125,7 +120,7 @@ function itemMenuLabel(item: HomeItem): string {
 
 // 窗口化:只显示选中项附近 MENU_WINDOW 行,首尾越界用 "..." 标记。
 // 这样容器内容一屏内,e.g. 镜腿滑动直接发 SCROLL 手势 → 移动选中项,而不是滚动页面。
-function menuWindow(items: HomeItem[], sel: number, tick = 0): string {
+function menuWindow(items: HomeItem[], sel: number): string {
   const n = items.length;
   if (n === 0) return '';
   let start = Math.max(0, sel - 3);
@@ -136,12 +131,7 @@ function menuWindow(items: HomeItem[], sel: number, tick = 0): string {
   }
   const lines: string[] = [];
   if (start > 0) lines.push('...');
-  for (let i = start; i < end; i++) {
-    const it = items[i];
-    const busy = it.kind === 'session' && ACTIVE_CONVS.has(it.session.id);
-    const label = busy ? truncate(itemMenuLabel(it), HOME_ITEM_MAX_CHARS - 2) : itemMenuLabel(it);
-    lines.push((i === sel ? '> ' : '  ') + (busy ? SPIN_FRAMES[Math.abs(tick) % SPIN_FRAMES.length] + ' ' : '') + label);
-  }
+  for (let i = start; i < end; i++) lines.push((i === sel ? '> ' : '  ') + itemMenuLabel(items[i]));
   if (end < n) lines.push('...');
   return lines.join('\n');
 }
@@ -177,9 +167,9 @@ export function mainContent(state: State, tickIndex = 0): string {
         }).join('\n');
       }
       if (state.view === 'desktop') {
-        return menuWindow(state.items, state.selectedIdx, tickIndex);
+        return menuWindow(state.items, state.selectedIdx);
       }
-      return menuWindow(state.items, state.selectedIdx, tickIndex);
+      return menuWindow(state.items, state.selectedIdx);
     }
     case 'idle':
       if (state.loading) return 'Loading ' + SPINNER_FRAMES[tickIndex % SPINNER_FRAMES.length];
