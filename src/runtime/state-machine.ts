@@ -74,6 +74,14 @@ function clampIdx(items: HomeItem[], next: number): number {
   return next;
 }
 
+function toSessionList(state: State): Transition {
+  // 统一的"退一层":回到 Desktop 会话列表并刷新。不中断任何在飞请求(①)。
+  return {
+    state: { kind: 'home', conversation: state.conversation, view: 'desktop', items: [{ kind: 'new' }], selectedIdx: 0, loading: true },
+    effects: [{ kind: 'reload_sessions' }, { kind: 'render' }],
+  };
+}
+
 function backToHome(state: State): Transition {
   return {
     state: { kind: 'home', conversation: state.conversation, view: 'root', items: [{ kind: 'dir', name: 'Desktop' }] /* Glasses 已停用 */, selectedIdx: 0 },
@@ -175,11 +183,8 @@ function reduceInner(state: State, event: Event): Transition {
       return { state, effects: [{ kind: 'exit_confirm' }] };
     }
     if (state.kind === 'idle') {
-      // 双击返回上一级:Desktop 会话列表
-      return {
-        state: { kind: 'home', conversation: state.conversation, view: 'desktop', items: [{ kind: 'new' }], selectedIdx: 0, loading: true },
-        effects: [{ kind: 'reload_sessions' }, { kind: 'render' }],
-      };
+      // 双击返回上一级:Desktop 会话列表(与 thinking 走同一处,保证一致)
+      return toSessionList(state);
     }
     if (state.kind === 'recording' || state.kind === 'transcribing') {
       // 语音转写中双击 = 取消:停麦 + 中断转写,回到**当前会话的历史页**(不回会话列表/根目录)
@@ -189,12 +194,12 @@ function reduceInner(state: State, event: Event): Transition {
       // 请求已发出、首字还没到(或刚在流式)时双击:与 idle 一样**只退一层**到 Desktop 会话列表。
       // 以前这里走 backToHome(view: 'root'),所以"还没出字就返回"会一路退到根目录 /;
       // 同时不加 abort_inflight,让这一轮继续在后台跑完(①)。
-      return {
-        state: { kind: 'home', conversation: state.conversation, view: 'desktop', items: [{ kind: 'new' }], selectedIdx: 0, loading: true },
-        effects: [{ kind: 'reload_sessions' }, { kind: 'render' }],
-      };
+      // 工具行(/read_file、/terminal、/process_manage 等)都发生在 thinking 里,所以一并覆盖。
+      return toSessionList(state);
     }
-    return backToHome(state);
+    // 其余状态(含 error 等)双击同样只退一层到会话列表,不再退到根目录 /。
+    // 注意:recording / transcribing(眼镜上的 listening)在上面单独处理,语义保持"取消"不变。
+    return toSessionList(state);
   }
 
   // Disconnected swallows everything except double-click (handled above).
